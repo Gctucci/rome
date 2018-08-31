@@ -49,7 +49,7 @@ def msg_handler(topic, message, mqttClient, redisClient):
             # Expects topic like /outbox/{orgId}/{deviceId}/deviceInfo
             # This is the first message received after newDevice,
             # and should be received sporadically
-            update_fields = set(["endPoints", "status", "name", "description"])
+            device = None
             if "endPoints" in message.keys():
                 endpoints = []
                 req_fields = set([k for k,v in Endpoint._fields.items() if v.required])
@@ -58,23 +58,30 @@ def msg_handler(topic, message, mqttClient, redisClient):
                     if set(end.keys()).intersection(req_fields) == req_fields:
                         endpoints.append(Endpoint(**end))
                 if len(endpoints) > 0:
-                    Device.objects(id=dev_id).update_one(
+                    device = Device.objects(id=dev_id).update_one(
                         add_to_set=endpoints,
                         upsert = True
                         )
             if "name" in message.keys():
-                Device.objects(id=dev_id).update_one(set__name=message["name"])
+                device = Device.objects(id=dev_id).update_one(set__name=message["name"])
             if "description" in message.keys():
-                Device.objects(id=dev_id).update_one(set__description=message["description"])
+                device = Device.objects(id=dev_id).update_one(set__description=message["description"])
             if "status" in message.keys():
                 # If the status message is valid, updates it
                 if len(set(message["status"]).intersection(set(DEVICE_STATUS))) > 0:
-                    Device.objects(id=dev_id).update_one(set__status=message["status"])
+                    device = Device.objects(id=dev_id).update_one(set__status=message["status"])
+            if device is not None:
+                # Sends data to Redis for caching/showing in Dash (Plotly.js)
+                redis_key = "{0}:{1}:deviceInfo".format(org_id, dev_id)
+                redisClient.set(redis_key, json.dumps(device))
         elif "lwt" == topic_detail:
             # Received last will from device
             # Expects topic like /outbox/{orgId}/{deviceId}/lwt
             # Updates device info
-            Device.objects(id=dev_id).update_one(set__status=DEVICE_STATUS[-1])
+            device = Device.objects(id=dev_id).update_one(set__status=DEVICE_STATUS[-1])
+            # Sends data to Redis for caching/showing in Dash (Plotly.js)
+            redis_key = "{0}:{1}:deviceInfo".format(org_id, dev_id)
+            redisClient.set(redis_key, json.dumps(device))
         else:
             # Assumes that there is new data incoming from the device
             # Expects topic like /outbox/{orgId}/{deviceId}/{endPointName}
@@ -85,7 +92,7 @@ def msg_handler(topic, message, mqttClient, redisClient):
                 msg_keys = set(message.keys())
                 if valid_endpoints.intersection(msg_keys) == msg_keys:
                     # Sends data to Redis for caching/showing in Dash (Plotly.js)
-                    redis_topic = "{0}:{1}".format(org_id, dev_id)
+                    redis_topic = "{0}:{1}:{2}".format(org_id, dev_id, topic_detail)
                     redisClient.publish(redis_topic, json.dumps(message))
                 else:
                     logger.warning("[MQTT] Discarded message. Invalid/missing fields for endPoint found")

@@ -31,8 +31,18 @@ def get_styles_by_name(file_format=".css", folder="static"):
     for file in os.listdir(folder):
         if file.endswith(file_format):
             f = os.path.join(folder, file)
-            paths.append(html.Link(rel='stylesheet', href=f))
+            paths.append(file)
     return paths
+
+def load_core_callbacks():
+    from callbacks import core
+    import inspect
+    # Get all core functions
+    all_functions = inspect.getmembers(core)
+    for fn in all_functions:
+        # Ignore dash callback decorator
+        if fn[0] != "dash_callback" and isinstance(fn[1], core.Callback):
+            app.callback(fn[1].dash_output, fn[1].dash_inputs)(fn[1])
 
 def load_semantic_ui():
     app.css.append_css({"external_url": "https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.3.2/semantic.min.css"})
@@ -48,7 +58,9 @@ def start_app():
         app.css.append_css({"external_url": "/static/{}".format(stylesheet)})
     # Initiates the base layout for dash
     app.layout = base.main_layout()
-    app.run_server(debug=True, port=3000)
+    # Load core callbacks
+    load_core_callbacks()
+    app.run_server(port=3000)
 
 if __name__ == '__main__':
     start_app()
